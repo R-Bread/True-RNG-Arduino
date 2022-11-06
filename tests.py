@@ -1,8 +1,9 @@
-# from xml.etree.ElementTree import PI
 import numpy as np
 from scipy.special import gammainc
+from scipy.fft import *
 import matplotlib.pyplot as plt
 from math import *
+from nist_tests import testsBatteryNIST
 
 with open("timer_random_numbers_rotxor.csv","r") as f:
 	data = f.read()
@@ -22,6 +23,7 @@ bits = []
 for byte in byteStrings:
 	for x in byte:
 		bits.append(int(x))
+bitsString = ''.join(byteStrings)
 
 def vonNeumannAlgorithm(bitsArray):
 	length = len(bitsArray)
@@ -40,16 +42,18 @@ def makeByteStringArray(bitsArray):
 		newArray.append(temp)
 	return newArray
 
-def testsBattery(bitsArray, intArray, label):
-	freqMonobitTest(bitsArray)
-	freqBlockTest(bitsArray, 32) # Mention why chose 32 blocks
-	runsTest(bitsArray)
-	longestRunsBlockTest(bitsArray)
-	valueOfPiTest(intArray, label)
+def sanityChecks(bitsArray, intArray):
+	numBits = len(bitsArray)
+	numInts = len(intArray)
+	propOnes = sum(bitsArray)/numBits 
+	print("Number of bits :",numBits)
+	print("Proportion of ones :",propOnes, "Expected proportion :",0.5,"±",2/sqrt(numBits))
+	mean = sum(intArray)/numInts
+	print("Integers' Mean :", mean,"Standard deviation :",np.std(intArray), "Expected STD :", 255/sqrt(12))
+	entropyPerBit = -propOnes*log2(propOnes) - (1-propOnes)*log2(1-propOnes)
+	minEntropyPerByte = -log2(max(np.histogram(intArray, bins=256)[0])/numInts)
+	print("Shannon Entropy per bit :",entropyPerBit, "bits, Min-Entropy per byte :", minEntropyPerByte,"bits")
 
-	plt.figure()
-	plt.hist(intArray, bins = 256)
-	plt.title(label)
 
 # Frequency monobit test
 def freqMonobitTest(bitsArray):
@@ -81,7 +85,7 @@ def freqBlockTest(bitsArray, numBlocks):
 	print("Chi Squared = ",chiSquared," p-value = ",p)
 
 # Calculating Pi using random numbers and seeing accuracy
-def valueOfPiTest(intArray, label):
+def valueOfPiTest(intArray, makePlot = True, label = ""):
 	length = len(intArray)
 	numCords = length//2
 	xCords = intArray[:numCords]
@@ -96,26 +100,28 @@ def valueOfPiTest(intArray, label):
 	print("Calculated value of Pi : ", piValue)
 	print("Actual Pi : ", pi)
 
-	plt.figure()
-	fig, ax = plt.subplots()
-	ax.scatter(xCords, yCords, s=0.5)
-	# fig = plt.gcf()
-	# ax = fig.gca()
-	arc = plt.Circle((0,0), 255, fill = False)
-	ax.add_patch(arc)
-	ax.set_xlim(0,255)
-	ax.set_ylim(0,255)
-	ax.set_title(label)
+	if makePlot:
+		plt.figure()
+		fig, ax = plt.subplots()
+		ax.scatter(xCords, yCords, s=0.5)
+		# fig = plt.gcf()
+		# ax = fig.gca()
+		arc = plt.Circle((0,0), 255, fill = False)
+		ax.add_patch(arc)
+		ax.set_xlim(0,255)
+		ax.set_ylim(0,255)
+		if label:
+			ax.set_title("Random points in cartesian space to estimate Pi, " + label)
+		else:
+			ax.set_title("Random points in cartesian space to estimate Pi")
 
 # Runs Test
 def runsTest(bitsArray):
 	length = len(bitsArray)
 
 	propOnes = sum(bitsArray)/length 
-	print("Number of bits :",length, " Proportion of ones : ",propOnes)
 
-	prereq = True
-	# prereq = bool(abs(propOnes-0.5) < 2/np.sqrt(length))
+	prereq = bool(abs(propOnes-0.5) < 2/np.sqrt(length))
 
 	v = 1 #initializing the test statistic
 
@@ -138,9 +144,9 @@ def runsTest(bitsArray):
 
 def longestRunsBlockTest(bitsArray):
 	length = len(bitsArray)
-	if length>128:
-		if length>6272:
-			if length>75*10**4:
+	if length>=128:
+		if length>=6272:
+			if length>=75*10**4:
 				blockLength = 10**4
 			else:
 				blockLength = 128
@@ -173,11 +179,11 @@ def longestRunsBlockTest(bitsArray):
 		probArray = [0.0882, 0.2092, 0.2483, 0.1933, 0.1208, 0.0675, 0.0727]
 
 	chiSquared = 0
-	K = len(probArray)
+	K = len(probArray)-1
 	N_values = {3 : 16, 5 : 49, 6 : 75}
 	N = N_values[K]
 
-	for i in range(K):
+	for i in range(K+1):
 		chiSquared += (freqArray[i] - N*probArray[i])**2/(N*probArray[i])
 
 	p = 1 - gammainc(K/2, chiSquared/2)
@@ -188,16 +194,21 @@ def longestRunsBlockTest(bitsArray):
 	else:
 		print("failed")
 	print("Chi Squared = ", chiSquared, " p-value = ", p)
+	print(blockLength, K, probArray, freqArray)
 
 def longestRunIndex(bitsArray, blockLength):
 	lengthOfCurrentRun = 0
 	lengthOfLongestRun = 0
-	# bitsArray.append(0)
 	for i in range(blockLength):
 		if bitsArray[i]==1:
 			lengthOfCurrentRun += 1
-		elif lengthOfCurrentRun>lengthOfLongestRun:
-			lengthOfLongestRun = lengthOfCurrentRun
+		else:
+			if lengthOfCurrentRun>lengthOfLongestRun:
+				lengthOfLongestRun = lengthOfCurrentRun
+			lengthOfCurrentRun = 0
+	if lengthOfCurrentRun>lengthOfLongestRun:
+		lengthOfLongestRun = lengthOfCurrentRun
+	
 	
 	if blockLength == 8:
 		if 0<lengthOfLongestRun<4:
@@ -267,18 +278,92 @@ def runsInBlock(bitsArray, blockLength): # Returns the tabulated frequencies
 def matrixRankTest(bitsArray):
 	pass
 
+def fourierTransformTest(bitsArray):
+	length = len(bitsArray)
+	M = abs(fft(2*np.array(bitsArray) - 1)[:length//2])
+	T = sqrt(length*log(1/0.05))
+	ExpectedNumPeaks = 0.95*length/2
+	ActualNumPeaks = np.count_nonzero(M<T)
+	d = 2*(ActualNumPeaks - ExpectedNumPeaks)/sqrt(length*0.95*0.05)
+	p = erfc(abs(d)/sqrt(2))
+	
+	print("Fourier Transform test : ", end="")
+	if p>0.01:
+		print("passed")
+	else:
+		print("failed")
+	print("d = ",d," p-value = ",p)
+
+# All the tests in one function to allow importing them together.
+def testsBattery(bitsArray, intArray, makePlots = True, label="", bitmapSize = 128):
+	sanityChecks(bitsArray, intArray)
+	freqMonobitTest(bitsArray)
+	freqBlockTest(bitsArray, 128)
+	runsTest(bitsArray)
+	# longestRunsBlockTest(bitsArray) # Not workin yet
+	fourierTransformTest(bitsArray)
+	valueOfPiTest(intArray, makePlots, label)
+	# matrixRankTest(bitsArray, 8) Yet to be encoded
+
+	if makePlots:
+		if len(bitsArray)>=(bitmapSize**2):
+			plt.figure()
+			plt.imshow(np.reshape(bitsArray[:bitmapSize**2], (bitmapSize,bitmapSize)))
+			if label:
+				plt.title("Bitmap, " + label)
+			else:
+				plt.title("Bitmap")
+		else:
+			print("Not enough numbers for Bitmap - decrease bitmap size")
+		plt.figure()
+		plt.plot([*[0],*abs(rfft(bitsArray, norm = "ortho")[1:])])
+		# Get rid of the 0th term because it is essentially the sum of the array
+		# And so is very high, but does not represent a frequency
+		# Note that these frequencies are not in Hz
+		if label:
+			plt.title("Discrete Fourier Transform of the bitstream, " + label)
+		else:
+			plt.title("Discrete Fourier Transform of the bitstream")
+		plt.figure()
+		plt.plot([*[0],*abs(rfft(intArray, norm = "ortho")[1:])])
+		if label:
+			plt.title("Discrete Fourier Transform of the 8-bit integers, " + label)
+		else:
+			plt.title("Discrete Fourier Transform of the 8-bit integers")
+		plt.figure()
+		plt.plot(numbers[:])
+		plt.grid(True)
+		if label:
+			plt.title("Time-series of 8-bit integers, " + label)
+		else:
+			plt.title("Time-series of 8-bit integers")
+		plt.figure()
+		plt.hist(intArray, bins = 256)
+		if label:
+			plt.title("Frequency histogram of the 8-bit integers, " + label)
+		else:
+			plt.title("Frequency histogram of the 8-bit integers")
+
 
 # Running Tests
 
 if __name__ == "__main__":
-	vnBits = vonNeumannAlgorithm(bits)
-	vnByteStrings = makeByteStringArray(vnBits)
-	vnNumbers = [int(x, 2) for x in vnByteStrings]
+	makePlots = True
+	applyVN = False
 
-	print("Before Von Neumann : ")
-	testsBattery(bits, numbers, "Before Von Neumann")
+	if applyVN:
+		vnBits = vonNeumannAlgorithm(bits)
+		vnByteStrings = makeByteStringArray(vnBits)
+		vnNumbers = [int(x, 2) for x in vnByteStrings]
+
+		print("Before Von Neumann : ")
+		testsBattery(bits, numbers, makePlots, "Before Von Neumann")
+		
+		print("\nAfter Von Neumann : ")
+		testsBattery(vnBits, vnNumbers, makePlots, "After Von Neumann")
 	
-	print("\nAfter Von Neumann : ")
-	testsBattery(vnBits, vnNumbers, "After Von Neumann")
+	else:
+		testsBattery(bits, numbers, makePlots)
+		testsBatteryNIST(bitsString)
 
 	plt.show()
